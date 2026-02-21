@@ -6,6 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from deepforest.conf.schema import Config as StructuredConfig
 from deepforest.main import deepforest
+from deepforest.scripts.sweep_scores import sweep_scores
 from deepforest.visualize import plot_results
 
 
@@ -82,6 +83,30 @@ def main():
     # Show config subcommand
     subparsers.add_parser("config", help="Show the current config")
 
+    # Sweep scores subcommand
+    sweep_parser = subparsers.add_parser(
+        "sweep-scores",
+        help="Sweep confidence thresholds and plot precision-recall curve",
+        epilog="Any remaining arguments <key>=<value> will be passed to Hydra to override the current config.",
+    )
+    sweep_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where CSV and plot will be written",
+    )
+    sweep_parser.add_argument(
+        "--thresholds",
+        type=float,
+        nargs="+",
+        help="Score thresholds to evaluate (default: 0.0-0.9 in steps of 0.1)",
+    )
+    sweep_parser.add_argument(
+        "--no-label-thresholds",
+        action="store_false",
+        dest="label_thresholds",
+        help="Disable threshold annotations on the PR curve (enabled by default)",
+    )
+
     # Config options for Hydra
     parser.add_argument("--config-dir", help="Show available config overrides and exit")
     parser.add_argument(
@@ -105,6 +130,15 @@ def main():
         train(cfg)
     elif args.command == "config":
         print(OmegaConf.to_yaml(cfg, resolve=True))
+    elif args.command == "sweep-scores":
+        csv_path, plot_path = sweep_scores(
+            cfg=cfg,
+            output_dir=args.output_dir,
+            thresholds=args.thresholds,
+            label_thresholds=args.label_thresholds,
+        )
+        print(f"Results saved to {csv_path}")
+        print(f"Plot saved to {plot_path}")
 
 
 if __name__ == "__main__":

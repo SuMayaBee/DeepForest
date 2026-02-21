@@ -3,9 +3,11 @@ import subprocess
 import sys
 from importlib.resources import files
 
+import pandas as pd
 from omegaconf import OmegaConf
 
 from deepforest import get_data
+from deepforest.scripts.sweep_scores import normalize_thresholds, plot_pr_curve
 
 SCRIPT = files("deepforest.scripts").joinpath("cli.py")
 
@@ -142,3 +144,88 @@ def test_predict_cli_config_help(tmp_path):
 
     assert result.returncode == 0
     assert len(result.stdout) > 0
+
+
+# --- sweep-scores tests ---
+
+
+def test_normalize_thresholds_defaults():
+    """No input returns 10 thresholds between 0.0 and 0.9."""
+    result = normalize_thresholds(None)
+    assert len(result) == 10
+    assert result == sorted(result)
+    assert result[0] == 0.0
+    assert result[-1] == 0.9
+
+
+def test_normalize_thresholds_custom():
+    """Custom thresholds are deduplicated and sorted."""
+    result = normalize_thresholds([0.5, 0.3, 0.5, 0.1])
+    assert result == [0.1, 0.3, 0.5]
+
+
+def test_plot_pr_curve_creates_file(tmp_path):
+    """plot_pr_curve writes a PNG to the given path."""
+    df = pd.DataFrame(
+        {
+            "score_thresh": [0.1, 0.3, 0.5],
+            "box_precision": [0.9, 0.8, 0.95],
+            "box_recall": [0.7, 0.6, 0.4],
+        }
+    )
+    output_path = str(tmp_path / "pr_curve.png")
+    plot_pr_curve(df, output_path, label_thresholds=True)
+    assert os.path.exists(output_path)
+
+
+def test_plot_pr_curve_empty_df(tmp_path):
+    """plot_pr_curve handles an empty DataFrame without error."""
+    df = pd.DataFrame(
+        {"score_thresh": [], "box_precision": [], "box_recall": []}
+    )
+    output_path = str(tmp_path / "pr_curve.png")
+    plot_pr_curve(df, output_path)
+    assert not os.path.exists(output_path)
+
+
+def test_sweep_scores_cli_missing_validation(tmp_path):
+    """sweep-scores subcommand fails when validation config is not set."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "sweep-scores",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode != 0
+
+
+def test_sweep_scores_cli(tmp_path):
+    """sweep-scores subcommand writes CSV and PNG to output-dir."""
+    test_labels = get_data("OSBS_029.csv")
+    root_dir = os.path.dirname(test_labels)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "sweep-scores",
+            "--output-dir",
+            str(tmp_path),
+            "--thresholds", "0.3", "0.5",
+            f"validation.csv_file={test_labels}",
+            f"validation.root_dir={root_dir}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+    assert (tmp_path / "precision_recall_thresholds.csv").exists()
+    assert (tmp_path / "precision_recall_curve.png").exists()
